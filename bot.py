@@ -22,14 +22,40 @@ mButtonTitle = config.mButtonTitle
 logging.basicConfig(format = u'%(levelname)-8s [%(asctime)s] %(message)s',
                     level = logging.DEBUG, filename = u'botlog.log')
 
+
 @bot.message_handler(commands=['start'])
 def start_handler(message):
-    # Получаем номер телефона от пользователя
-    logging.debug('start_handler. ChatId: {0}. Get message: {1}'.format(message.chat.id, message.text))
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    batton = types.KeyboardButton(mButtonTitle, request_contact=True)
-    markup.add(batton)
-    msg = bot.reply_to(message, config.mGetPhoneMsg, reply_markup=markup)
+    logging.debug('start_handler. ChatId: {0}. Get message: {1}'.format(message.chat.id, message))
+    res = check_user(message)
+    if res['code'] == 0:
+        bot.send_message(message.chat.id, res['answer'])
+        logging.debug('check_telegram_login.  ChatId: {0}. Send message: {1}'.format(message.chat.id, res['answer']))
+    else:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        batton = types.KeyboardButton(mButtonTitle, request_contact=True)
+        markup.add(batton)
+        msg = bot.reply_to(message, config.mGetPhoneMsg, reply_markup=markup)
+
+def check_user(message):
+    mLogin = message.from_user.username
+    if mLogin != None:
+        res = check_telegram_login(message)
+    else:
+        res = {'code': -1, 'answer': config.noPhoneOnStaffMsg}
+    return res
+
+
+def check_telegram_login(message):
+    res = {'code': -1, 'answer': config.noPhoneOnStaffMsg}
+    mCheckRes = numId.checkTelegramLogin(message.from_user.username)
+    logging.debug('message.from_user.username {}'.format(message.from_user.username))
+    if (mCheckRes['code'] == 0):
+        # добавляю в список пользователей
+        mChatidList.append(message.chat.id)
+        mMsg = mCheckRes['name'] + ", " + config.welcomeMsg
+        res['answer'] = mMsg
+        res['code'] = 0
+    return res
 
 @bot.message_handler(content_types=["contact"])
 def check_chatid(message):
@@ -38,10 +64,11 @@ def check_chatid(message):
     else:
         check_phone_number(message)
 
+def check_phone_number(message):
 
-def check_phone_number(message):    
     mCheckRes = {'code': 0, 'name': 'Добрый человек'}
     mPhoneNumber = re.sub(r'(\s+)?[+]?[-]?', '', message.contact.phone_number)
+
     if (mPhoneNumber not in mPhoneWhiteList):
         logging.debug('check_phone_number. Chatid {0} NOT in mPhoneWhiteList'.format(message.chat.id))
         mCheckRes = numId.checkSendersPhone(mPhoneNumber)
@@ -57,16 +84,26 @@ def check_phone_number(message):
 
 @bot.message_handler(content_types=["text"])
 def send_phone_number(message):
-    if (len(message.text) > 15) \
-            or (not message.text.replace(' ', '').isalnum()
-                or message.text.replace(' ', '').isdigit()
-                or message.text.replace(' ', '').isalpha()):
+    mText = message.text.replace(' ', '')
+    if (len(mText) > 15) \
+            or (not mText.isalnum()
+                or mText.isalpha())\
+            or len(mText) < 3:
         bot.send_message(message.chat.id, config.mNotPlateMsg)
     else:
         if message.chat.id in mChatidList:
-            mMsg = form_msg(numId.findPhoneNumber(message.text, 0))
+            res = numId.findPhoneNumber(mText, 0)
+            res['req'] = message.text
+            mMsg = form_msg(res)
         else:
-            mMsg = config.noPhoneOnStaffMsg
+            res = check_telegram_login(message)
+            if res['code'] == 0:
+                res = numId.findPhoneNumber(mText, 0)
+                res['req'] = message.text
+                mMsg = form_msg(res)
+            else:
+                mMsg = res['answer']
+            logging.debug('send_phone_number.  ChatId: {0}. Goto "check_telegram_login"'.format(message.chat.id))
         bot.send_message(message.chat.id, mMsg)
         logging.debug('send_phone_number.  ChatId: {0}. Send message: {1}'.format(message.chat.id, mMsg))
 
@@ -76,6 +113,8 @@ def form_msg(mData):
         mMsg = mData['req'] + '. ' + config.errorMsg
     if mData['code'] == 0:
         mMsg = mData['plate'] + '. ' + mData['model'] + '\n' + mData['phone_number'] + '\n ' + mData['login'] + '@. ' + mData['name'] + ' ' + mData['surname']
+        if mData['is_dismissed']:
+            mMsg += ' (Бывший сотрудник)'
     return mMsg
 
 if __name__ == '__main__':
